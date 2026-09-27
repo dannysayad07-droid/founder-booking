@@ -5,3 +5,4 @@
   "dependencies":{"@supabase/supabase-js":"latest","next":"latest","react":"latest","react-dom":"latest","razorpay":"latest","googleapis":"latest"},
   "devDependencies":{"@types/node":"latest","@types/react":"latest","@types/react-dom":"latest","typescript":"latest"}
 }
+
