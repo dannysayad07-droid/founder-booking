@@ -14,13 +14,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing booking details' }, { status: 400 });
   }
 
+  // maybeSingle() is important here: founder_settings is optional, so an empty
+  // table must fall back to the default booking settings instead of returning
+  // a "no rows" error.
   const { data: settings, error: settingsError } = await db
     .from('founder_settings')
     .select('price, currency, duration_minutes, active')
     .eq('id', 1)
-    .single();
+    .maybeSingle();
 
-  // Keep payments usable before the optional founder settings row is configured.
+  if (settingsError) {
+    return NextResponse.json(
+      { error: `Unable to read founder booking settings: ${settingsError.message}` },
+      { status: 503 }
+    );
+  }
+
   const effectiveSettings = settings ?? {
     price: 1000,
     currency: 'INR',
@@ -28,17 +37,11 @@ export async function POST(req: NextRequest) {
     active: true,
   };
 
-  if (settingsError && !settings) {
-    // A missing settings row is handled by the defaults above. Other database
-    // errors should still stop checkout rather than silently charging a wrong price.
-    const message = String(settingsError.message || '').toLowerCase();
-    if (!message.includes('no rows') && !message.includes('0 rows')) {
-      return NextResponse.json({ error: 'Unable to read founder booking settings.' }, { status: 503 });
-    }
-  }
-
   if (!effectiveSettings.active) {
-    return NextResponse.json({ error: 'Founder booking is currently unavailable.' }, { status: 503 });
+    return NextResponse.json(
+      { error: 'Founder booking is currently unavailable.' },
+      { status: 503 }
+    );
   }
 
   const { data: conflict } = await db
@@ -53,14 +56,20 @@ export async function POST(req: NextRequest) {
   );
 
   if (activeConflict) {
-    return NextResponse.json({ error: 'That slot was just taken. Please choose another slot.' }, { status: 409 });
+    return NextResponse.json(
+      { error: 'That slot was just taken. Please choose another slot.' },
+      { status: 409 }
+    );
   }
 
   const amount = Math.round(Number(effectiveSettings.price) * 100);
   const currency = effectiveSettings.currency || 'INR';
 
   if (!amount || amount < 100) {
-    return NextResponse.json({ error: 'Invalid booking price in founder settings.' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Invalid booking price in founder settings.' },
+      { status: 500 }
+    );
   }
 
   const { data: booking, error } = await db
@@ -79,7 +88,10 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error || !booking) {
-    return NextResponse.json({ error: error?.message || 'Could not create booking' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Could not create booking' },
+      { status: 500 }
+    );
   }
 
   try {
@@ -103,6 +115,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     await db.from('bookings').update({ status: 'cancelled' }).eq('id', booking.id);
-    return NextResponse.json({ error: error?.message || 'Could not create payment order' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Could not create payment order' },
+      { status: 500 }
+    );
   }
 }
