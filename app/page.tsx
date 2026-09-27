@@ -4,6 +4,15 @@ import { useEffect, useState } from 'react';
 
 type Slot = { start: string; end: string };
 
+type Payment = {
+  bookingId: string;
+  amount: number;
+  currency: string;
+  upiId: string;
+  qrUrl: string;
+  upiUri: string;
+};
+
 export default function Home() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -11,15 +20,9 @@ export default function Home() {
   const [selected, setSelected] = useState<Slot | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [payment, setPayment] = useState<{
-    bookingId: string;
-    amount: number;
-    currency: string;
-    upiId: string;
-    qrUrl: string;
-    upiUri: string;
-  } | null>(null);
-  const [submittingPayment, setSubmittingPayment] = useState(false);
+  const [payment, setPayment] = useState<Payment | null>(null);
+  const [paymentState, setPaymentState] = useState<'idle' | 'submitted' | 'confirmed'>('idle');
+  const [submitting, setSubmitting] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -34,44 +37,59 @@ export default function Home() {
 
   useEffect(() => {
     load();
+    setSelected(null);
+    setPayment(null);
+    setPaymentState('idle');
   }, [date]);
 
   async function startBooking() {
     if (!selected || !name || !email) return;
-
-    const r = await fetch('/api/razorpay/order', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        start: selected.start,
-        end: selected.end,
-        name,
-        email
-      })
-    });
-
-    const j = await r.json();
-
-    if (!r.ok) {
-      alert(j.error || 'Could not start booking');
-      await load();
-      return;
+    setSubmitting(true);
+    try {
+      const r = await fetch('/api/upi/order', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          start: selected.start,
+          end: selected.end,
+          name,
+          email
+        })
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        alert(j.error || 'Could not start booking');
+        return;
+      }
+      setPayment(j);
+      setPaymentState('idle');
+    } finally {
+      setSubmitting(false);
     }
-
-    setPayment({
-      bookingId: j.bookingId,
-      amount: j.amount,
-      currency: j.currency,
-      upiId: j.upiId,
-      qrUrl: j.qrUrl,
-      upiUri: j.upiUri
-    });
   }
+
+  useEffect(() => {
+    if (!payment || paymentState === 'confirmed') return;
+
+    const timer = window.setInterval(async () => {
+      const r = await fetch(
+        `/api/booking/status?bookingId=${encodeURIComponent(payment.bookingId)}&email=${encodeURIComponent(email)}`,
+        { cache: 'no-store' }
+      );
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j.status === 'paid') {
+        setPaymentState('confirmed');
+        window.clearInterval(timer);
+      }
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [payment, paymentState, email]);
 
   async function confirmPaymentSubmitted() {
     if (!payment) return;
-
-    setSubmittingPayment(true);
+    setSubmitting(true);
     try {
       const r = await fetch('/api/upi/paid', {
         method: 'POST',
@@ -79,20 +97,24 @@ export default function Home() {
         body: JSON.stringify({ bookingId: payment.bookingId })
       });
       const j = await r.json();
-
       if (!r.ok) {
-        alert(j.error || 'Could not submit payment status');
+        alert(j.error || 'Could not submit payment');
         return;
       }
-
-      alert('Payment marked as submitted. Your booking will be confirmed after payment is verified.');
-      setPayment(null);
-      setSelected(null);
-      await load();
+      setPaymentState('submitted');
     } finally {
-      setSubmittingPayment(false);
+      setSubmitting(false);
     }
   }
+
+  const formattedDate = selected
+    ? new Date(selected.start).toLocaleDateString('en-IN', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      })
+    : '';
 
   return (
     <main style={{ maxWidth: 760, margin: '0 auto', padding: 40, fontFamily: 'Arial, sans-serif' }}>
@@ -107,35 +129,31 @@ export default function Home() {
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 24 }}>
-        {loading ? (
-          <p>Loading...</p>
-        ) : slots.length === 0 ? (
-          <p>No slots available.</p>
-        ) : (
-          slots.map(s => (
-            <button
-              key={s.start}
-              onClick={() => setSelected(s)}
-              style={{
-                padding: 16,
-                border: '1px solid #ddd',
-                borderRadius: 12,
-                background: selected?.start === s.start ? '#222' : '#fff',
-                color: selected?.start === s.start ? '#fff' : '#222'
-              }}
-            >
-              {new Date(s.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </button>
-          ))
-        )}
+        {loading ? <p>Loading...</p> : slots.length === 0 ? <p>No slots available.</p> : slots.map(s => (
+          <button
+            key={s.start}
+            onClick={() => {
+              setSelected(s);
+              setPayment(null);
+              setPaymentState('idle');
+            }}
+            style={{
+              padding: 16,
+              border: '1px solid #ddd',
+              borderRadius: 12,
+              background: selected?.start === s.start ? '#222' : '#fff',
+              color: selected?.start === s.start ? '#fff' : '#222'
+            }}
+          >
+            {new Date(s.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+          </button>
+        ))}
       </div>
 
       {selected && !payment && (
         <section style={{ marginTop: 32, padding: 24, border: '1px solid #ddd', borderRadius: 16 }}>
           <h2>Confirm booking</h2>
-          <p>
-            {new Date(selected.start).toLocaleString()} – {new Date(selected.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </p>
+          <p>{formattedDate} — {new Date(selected.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
           <input
             placeholder="Your name"
             value={name}
@@ -151,20 +169,19 @@ export default function Home() {
           />
           <button
             onClick={startBooking}
-            disabled={!name || !email}
+            disabled={!name || !email || submitting}
             style={{ padding: '12px 20px' }}
           >
-            Continue to payment
+            {submitting ? 'Starting...' : 'Continue to payment'}
           </button>
         </section>
       )}
 
-      {payment && (
+      {payment && paymentState !== 'confirmed' && (
         <section style={{ marginTop: 32, padding: 24, border: '1px solid #ddd', borderRadius: 16, textAlign: 'center' }}>
           <h2>Pay by UPI</h2>
-          <p>Scan this QR code with PhonePe, Paytm, Google Pay, or another UPI app.</p>
+          <p>Scan the QR code with PhonePe, Paytm, Google Pay, or another UPI app.</p>
           <h3>{payment.currency} {payment.amount.toLocaleString('en-IN')}</h3>
-
           <img
             src={payment.qrUrl}
             alt="UPI payment QR code"
@@ -172,40 +189,39 @@ export default function Home() {
             height={280}
             style={{ display: 'block', margin: '20px auto', border: '1px solid #eee', padding: 8 }}
           />
-
           <p><strong>UPI ID:</strong> {payment.upiId}</p>
-          <p style={{ fontSize: 13, color: '#666' }}>
-            On a phone, you can also tap the button below to open a UPI app.
-          </p>
-
           <a
             href={payment.upiUri}
-            style={{
-              display: 'inline-block',
-              padding: '12px 20px',
-              borderRadius: 8,
-              background: '#222',
-              color: '#fff',
-              textDecoration: 'none',
-              marginBottom: 12
-            }}
+            style={{ display: 'inline-block', padding: '12px 20px', borderRadius: 8, background: '#222', color: '#fff', textDecoration: 'none', marginBottom: 12 }}
           >
             Open UPI app
           </a>
-
           <br />
-
           <button
             onClick={confirmPaymentSubmitted}
-            disabled={submittingPayment}
+            disabled={submitting}
             style={{ padding: '12px 20px' }}
           >
-            {submittingPayment ? 'Submitting...' : "I've Paid"}
+            {submitting ? 'Submitting...' : "I've Paid"}
           </button>
 
-          <p style={{ fontSize: 13, color: '#666', marginTop: 16 }}>
-            Your appointment is not confirmed until the payment is manually verified.
-          </p>
+          {paymentState === 'submitted' && (
+            <div style={{ marginTop: 20 }}>
+              <h3>⏳ Payment submitted</h3>
+              <p>We are verifying your payment. This page will update automatically when your booking is confirmed.</p>
+              <p style={{ fontSize: 13, color: '#666' }}>Please keep this page open.</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {paymentState === 'confirmed' && selected && (
+        <section style={{ marginTop: 32, padding: 28, border: '1px solid #ddd', borderRadius: 16 }}>
+          <h2>✅ Booking confirmed</h2>
+          <p>Your payment has been verified and your appointment is confirmed.</p>
+          <p><strong>{formattedDate}</strong></p>
+          <p>{new Date(selected.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} — {new Date(selected.end).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
+          <p>We&apos;ll use <strong>{email}</strong> for your booking details.</p>
         </section>
       )}
     </main>

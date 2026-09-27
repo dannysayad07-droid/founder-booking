@@ -18,6 +18,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
   }
 
+  if (booking.status === 'paid') {
+    return NextResponse.json({ ok: true, status: 'paid' });
+  }
+
   if (booking.status !== 'pending') {
     return NextResponse.json({ error: 'This booking is no longer pending.' }, { status: 409 });
   }
@@ -31,5 +35,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, status: 'submitted' });
 }
