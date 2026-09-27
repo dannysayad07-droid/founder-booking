@@ -5,8 +5,8 @@ import { decrypt } from '@/lib/crypto';
 
 function makeSlots(date: string, startTime: string, endTime: string, duration: number) {
   const out: { start: string; end: string }[] = [];
-  const start = new Date(`${date}T${startTime}+05:30`);
-  const end = new Date(`${date}T${endTime}+05:30`);
+  const start = new Date(date + 'T' + startTime + '+05:30');
+  const end = new Date(date + 'T' + endTime + '+05:30');
 
   for (let cursor = new Date(start); cursor.getTime() + duration * 60000 <= end.getTime(); cursor = new Date(cursor.getTime() + duration * 60000)) {
     const slotEnd = new Date(cursor.getTime() + duration * 60000);
@@ -25,7 +25,19 @@ export async function GET(req: NextRequest) {
     .eq('id', 1)
     .single();
 
-  if (settingsError || !settings?.active) {
+  const effectiveSettings = settings ?? {
+    working_start: '09:00',
+    working_end: '17:00',
+    duration_minutes: 30,
+    timezone: 'Asia/Kolkata',
+    active: true,
+  };
+
+  if (settingsError && settings) {
+    return NextResponse.json({ slots: [], error: 'Unable to read founder availability.' });
+  }
+
+  if (!effectiveSettings.active) {
     return NextResponse.json({ slots: [], error: 'Founder availability is not configured yet.' });
   }
 
@@ -39,9 +51,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ slots: [], calendarConnected: false });
   }
 
-  const startTime = override?.start_time || settings.working_start;
-  const endTime = override?.end_time || settings.working_end;
-  const duration = settings.duration_minutes || 30;
+  const startTime = override?.start_time || effectiveSettings.working_start;
+  const endTime = override?.end_time || effectiveSettings.working_end;
+  const duration = effectiveSettings.duration_minutes || 30;
   let slots = makeSlots(date, startTime, endTime, duration);
 
   const windowStart = new Date().toISOString();
@@ -73,8 +85,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const cal = calendarClient(decrypt(conn.refresh_token));
-    const timeMin = new Date(`${date}T00:00:00+05:30`);
-    const timeMax = new Date(`${date}T23:59:59+05:30`);
+    const timeMin = new Date(date + 'T00:00:00+05:30');
+    const timeMax = new Date(date + 'T23:59:59+05:30');
     const fb = await cal.freebusy.query({
       requestBody: {
         timeMin: timeMin.toISOString(),
