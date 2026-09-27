@@ -1,0 +1,2 @@
+import {NextResponse} from 'next/server'; import {oauth,scopes} from '@/lib/google';
+export async function GET(){const url=oauth().generateAuthUrl({access_type:'offline',prompt:'consent',scope:scopes});return NextResponse.redirect(url)}
