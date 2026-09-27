@@ -20,8 +20,25 @@ export async function POST(req: NextRequest) {
     .eq('id', 1)
     .single();
 
-  if (settingsError || !settings?.active) {
-    return NextResponse.json({ error: 'Founder booking is not configured yet.' }, { status: 503 });
+  // Keep payments usable before the optional founder settings row is configured.
+  const effectiveSettings = settings ?? {
+    price: 1000,
+    currency: 'INR',
+    duration_minutes: 30,
+    active: true,
+  };
+
+  if (settingsError && !settings) {
+    // A missing settings row is handled by the defaults above. Other database
+    // errors should still stop checkout rather than silently charging a wrong price.
+    const message = String(settingsError.message || '').toLowerCase();
+    if (!message.includes('no rows') && !message.includes('0 rows')) {
+      return NextResponse.json({ error: 'Unable to read founder booking settings.' }, { status: 503 });
+    }
+  }
+
+  if (!effectiveSettings.active) {
+    return NextResponse.json({ error: 'Founder booking is currently unavailable.' }, { status: 503 });
   }
 
   const { data: conflict } = await db
@@ -31,7 +48,7 @@ export async function POST(req: NextRequest) {
     .gt('end_time', start)
     .in('status', ['pending', 'paid']);
 
-  const activeConflict = (conflict || []).find((b) =>
+  const activeConflict = (conflict || []).find((b: any) =>
     b.status === 'paid' || Date.now() - new Date(b.created_at).getTime() < 15 * 60 * 1000
   );
 
@@ -39,8 +56,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'That slot was just taken. Please choose another slot.' }, { status: 409 });
   }
 
-  const amount = Math.round(Number(settings.price) * 100);
-  const currency = settings.currency || 'INR';
+  const amount = Math.round(Number(effectiveSettings.price) * 100);
+  const currency = effectiveSettings.currency || 'INR';
 
   if (!amount || amount < 100) {
     return NextResponse.json({ error: 'Invalid booking price in founder settings.' }, { status: 500 });
@@ -53,7 +70,7 @@ export async function POST(req: NextRequest) {
       end_time: end,
       customer_name: name,
       customer_email: email,
-      price: Number(settings.price),
+      price: Number(effectiveSettings.price),
       currency,
       status: 'pending',
       payment_status: 'pending'
