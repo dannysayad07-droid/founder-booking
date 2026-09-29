@@ -42,7 +42,7 @@ export default function Home() {
   }, [date]);
 
   useEffect(() => {
-    if (!payment || paymentState !== 'confirmed') return;
+    if (!payment || paymentState !== 'submitted') return;
     const timer = window.setInterval(async () => {
       const r = await fetch(
         `/api/booking/status?bookingId=${encodeURIComponent(payment.bookingId)}&email=${encodeURIComponent(email)}`,
